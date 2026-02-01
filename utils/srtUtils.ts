@@ -47,13 +47,14 @@ export const generateSRT = (items: SubtitleItem[]): string => {
  * Downloads a string as a file.
  */
 export const downloadBlob = (content: string, filename: string) => {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  // Fix: Access DOM-related globals via globalThis to handle cases where they are not in the current global scope
+  const blob = new (globalThis as any).Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = (globalThis as any).URL.createObjectURL(blob);
+  const link = (globalThis as any).document.createElement('a');
   link.href = url;
   link.download = filename;
-  document.body.appendChild(link);
+  (globalThis as any).document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  (globalThis as any).document.body.removeChild(link);
+  (globalThis as any).URL.revokeObjectURL(url);
 };

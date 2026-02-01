@@ -1,5 +1,6 @@
+
 {
-  "name": "Copy of SubGlot - Japanese to English Subtitle Translator",
-  "description": "A professional SaaS platform for translating SRT files from Japanese to English with high accuracy and batch processing capabilities.",
+  "name": "SubGlot - Japanese to English Subtitle Translator",
+  "description": "A specialized SaaS platform for translating Japanese subtitles to English using high-performance neural machine translation.",
   "requestFramePermissions": []
 }

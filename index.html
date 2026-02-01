@@ -19,6 +19,8 @@
       font-family: 'Inter', sans-serif; 
       background-color: var(--bg-dark);
       color: #f8fafc;
+      margin: 0;
+      padding: 0;
     }
     .font-orbitron { font-family: 'Orbitron', sans-serif; }
     .font-mono { font-family: 'Fira Code', 'Courier New', monospace; }
@@ -81,23 +83,26 @@
     }
     ::-webkit-scrollbar-thumb:hover { background: var(--neon-primary); }
   </style>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
-    "@ffmpeg/ffmpeg": "https://esm.sh/@ffmpeg/ffmpeg@^0.12.10",
-    "@ffmpeg/util": "https://esm.sh/@ffmpeg/util@^0.12.1"
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://esm.sh/react@^19.2.4",
+      "react/": "https://esm.sh/react@^19.2.4/",
+      "react-dom": "https://esm.sh/react-dom@^19.2.4",
+      "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+      "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+      "@ffmpeg/ffmpeg": "https://esm.sh/@ffmpeg/ffmpeg@^0.12.10",
+      "@ffmpeg/util": "https://esm.sh/@ffmpeg/util@^0.12.1"
+    }
   }
-}
-</script>
+  </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-<body class="overflow-x-hidden min-h-screen">
-  <div class="fixed inset-0 grid-bg pointer-events-none"></div>
-  <div id="root"></div>
+<body class="overflow-x-hidden min-h-screen relative">
+  <div class="fixed inset-0 grid-bg pointer-events-none z-0"></div>
+  <div id="root" class="relative z-10"></div>
+  <!-- Application Entry Point -->
+  <script type="module" src="./index.tsx"></script>
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>

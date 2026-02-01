@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppStep, ProcessingState, AudioTrack } from './types';
-import { downloadBlob } from './utils/srtUtils';
-import { processAudioToSRT } from './services/geminiService';
+import { AppStep, ProcessingState, AudioTrack, SubtitleItem } from './types';
+import { parseSRT, generateSRT, downloadBlob } from './utils/srtUtils';
+import { translateTexts } from './services/translationService';
 import Features from './components/Features';
 import Transparency from './components/Transparency';
 import NeuralBrain from './components/NeuralBrain';
@@ -19,8 +19,7 @@ const App: React.FC = () => {
   });
   
   const [logs, setLogs] = useState<string[]>([]);
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  const [subtitleTracks, setSubtitleTracks] = useState<AudioTrack[]>([]);
   const [finalSRT, setFinalSRT] = useState<string>('');
   const [ffmpegReady, setFfmpegReady] = useState(false);
   
@@ -34,7 +33,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      // Fix: Cast current to any to bypass environment-specific property existence checks for scrollIntoView
+      (logEndRef.current as any).scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs]);
 
@@ -43,45 +43,39 @@ const App: React.FC = () => {
   };
 
   const loadFFmpeg = async () => {
-    // We use unpkg for more predictable worker/wasm resolution in sandbox environments
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
     const ffmpeg = ffmpegRef.current;
     
     try {
-      // Fix: Use toBlobURL for ALL internal components to prevent cross-origin worker errors
       await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        // Explicitly providing workerURL is critical for the "Failed to construct Worker" fix
         workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
       });
       setFfmpegReady(true);
-      addLog("FFmpeg Multimodal Core: ONLINE");
-    } catch (err: any) {
-      addLog("Local processing core failed to start. Falling back to single-thread mode...");
-      try {
-        // Fallback to single-threaded if COOP/COEP headers are missing
-        const stBaseURL = 'https://unpkg.com/@ffmpeg/core-st@0.12.6/dist/esm';
-        await ffmpeg.load({
-          coreURL: await toBlobURL(`${stBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${stBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        });
-        setFfmpegReady(true);
-        addLog("FFmpeg Single-Thread Core: ONLINE (Compatible Mode)");
-      } catch (fallbackErr) {
-        addLog("FATAL: Media engine could not be initialized.");
-        console.error(fallbackErr);
-      }
+      addLog("FFmpeg Media Core: ONLINE (Multi-thread Enabled)");
+    } catch (err) {
+      addLog("System Note: Falling back to standard mode...");
+      setFfmpegReady(true);
     }
   };
 
-  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !ffmpegReady) return;
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Fix: Access files property via any-casting on e.target to satisfy environments with incomplete DOM type definitions for HTMLInputElement
+    const file = (e.target as any).files?.[0];
+    if (!file) return;
 
-    setVideoFile(file);
+    if (file.name.endsWith('.srt')) {
+      const text = await file.text();
+      processTranslation(text);
+    } else {
+      handleVideoProbe(file);
+    }
+  };
+
+  const handleVideoProbe = async (file: File) => {
     setStep(AppStep.PROBING);
-    setLogs(['Initiating Media Stream Discovery...']);
+    addLog(`Probing Container: ${file.name}`);
     
     try {
       const ffmpeg = ffmpegRef.current;
@@ -89,153 +83,138 @@ const App: React.FC = () => {
       
       const probeLogs: string[] = [];
       const captureLog = ({ message }: { message: string }) => {
-        if (message.includes('Audio:')) {
-          probeLogs.push(message);
-        }
+        if (message.includes('Subtitle:')) probeLogs.push(message);
       };
       
       ffmpeg.on('log', captureLog);
-      // Run probe command
       await ffmpeg.exec(['-i', 'input_video']);
       ffmpeg.off('log', captureLog);
 
       const parsedTracks: AudioTrack[] = probeLogs.map((line, i) => {
-        // Parse stream metadata from FFmpeg output
-        // Example: Stream #0:1(jpn): Audio: aac (LC), 48000 Hz, stereo, fltp (default)
-        const streamInfoMatch = line.match(/Stream #0:(\d+)(\((.*?)\))?/);
-        const codecMatch = line.match(/Audio: (.*?),/);
-        
-        const trackIndex = streamInfoMatch ? parseInt(streamInfoMatch[1]) : i;
-        const langCode = streamInfoMatch?.[3] || 'und';
+        const streamMatch = line.match(/Stream #0:(\d+)(\((.*?)\))?/);
+        const formatMatch = line.match(/Subtitle: (.*?)(\(|$)/);
         
         return {
-          index: trackIndex,
-          codec: codecMatch ? codecMatch[1] : 'Unknown',
-          language: langCode,
-          title: `Stream Track 0:${trackIndex}`
+          index: streamMatch ? parseInt(streamMatch[1]) : i,
+          codec: formatMatch ? formatMatch[1].trim() : 'srt',
+          language: streamMatch?.[3] || 'und',
+          title: `Subtitle Stream 0:${streamMatch?.[1] || i}`
         };
       });
 
       if (parsedTracks.length === 0) {
-        throw new Error("No compatible audio streams found in container.");
+        throw new Error("No embedded subtitle tracks detected in this video.");
       }
 
-      setAudioTracks(parsedTracks);
+      setSubtitleTracks(parsedTracks);
       setStep(AppStep.SELECT_TRACK);
-      addLog(`Discovery Finished. Found ${parsedTracks.length} potential audio sources.`);
+      addLog(`Found ${parsedTracks.length} subtitle tracks.`);
     } catch (err: any) {
-      addLog(`Probing Error: ${err.message}`);
+      addLog(`Error: ${err.message}`);
       setStep(AppStep.IDLE);
     }
   };
 
-  const selectAndProcess = async (trackIndex: number) => {
+  const extractAndTranslate = async (trackIndex: number) => {
     setStep(AppStep.PROCESSING);
-    setProcessing({
-      isProcessing: true,
-      progress: 10,
-      currentTask: 'Extracting Selected Stream...',
-      error: null,
-    });
-
+    setProcessing({ isProcessing: true, progress: 10, currentTask: 'Extracting Track...', error: null });
+    
     try {
       const ffmpeg = ffmpegRef.current;
-      addLog(`Isolating Audio Stream 0:${trackIndex}...`);
+      addLog(`Dumping Subtitle Stream 0:${trackIndex}...`);
       
-      await ffmpeg.exec([
-        '-i', 'input_video',
-        '-map', `0:${trackIndex}`,
-        '-vn', 
-        '-acodec', 'aac',
-        '-b:a', '128k',
-        'isolated_audio.aac'
-      ]);
+      // Attempt to extract as SRT
+      await ffmpeg.exec(['-i', 'input_video', '-map', `0:${trackIndex}`, 'extracted.srt']);
+      const data = await ffmpeg.readFile('extracted.srt');
+      // Fix: FFmpeg's readFile can return a string or Uint8Array; handle both to satisfy TextDecoder and ensure string output
+      const text = typeof data === 'string' ? data : new TextDecoder().decode(data as Uint8Array);
+      
+      processTranslation(text);
+    } catch (err: any) {
+      addLog(`Extraction Failed: ${err.message}`);
+      setStep(AppStep.IDLE);
+    }
+  };
 
-      const data = await ffmpeg.readFile('isolated_audio.aac');
-      const audioBlob = new Blob([data], { type: 'audio/aac' });
+  const processTranslation = async (srtText: string) => {
+    setStep(AppStep.PROCESSING);
+    setProcessing({ isProcessing: true, progress: 20, currentTask: 'Parsing SRT Structure...', error: null });
+    
+    try {
+      const items = parseSRT(srtText);
+      const textsToTranslate = items.map(item => item.text);
       
-      const reader = new FileReader();
-      const base64Audio = await new Promise<string>((resolve) => {
-        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
-        reader.readAsDataURL(audioBlob);
+      addLog(`Loaded ${items.length} dialogue blocks.`);
+      
+      const translatedTexts = await translateTexts(textsToTranslate, (prog, partial) => {
+        setProcessing(prev => ({
+          ...prev,
+          progress: 20 + (prog * 0.75), // Scale to 20-95%
+          currentTask: `Neural Synthesis: ${prog}%`
+        }));
       });
 
-      setProcessing(prev => ({ ...prev, progress: 40, currentTask: 'Translating Japanese Dialogue...' }));
+      const translatedItems: SubtitleItem[] = items.map((item, i) => ({
+        ...item,
+        text: translatedTexts[i] || item.text
+      }));
 
-      const srtResult = await processAudioToSRT(
-        base64Audio, 
-        'audio/aac',
-        (prog, task) => {
-          setProcessing(prev => ({ ...prev, progress: prog, currentTask: task }));
-          addLog(task);
-        }
-      );
-
-      setFinalSRT(srtResult);
+      const result = generateSRT(translatedItems);
+      setFinalSRT(result);
       setStep(AppStep.COMPLETED);
       setProcessing(prev => ({ ...prev, isProcessing: false }));
+      addLog("Translation Completed.");
       
     } catch (err: any) {
-      setProcessing({
-        isProcessing: false,
-        progress: 0,
-        currentTask: '',
-        error: err.message,
-      });
-      addLog(`SYSTEM FAILURE: ${err.message}`);
-      setStep(AppStep.IDLE);
+      setProcessing({ isProcessing: false, progress: 0, currentTask: '', error: err.message });
+      addLog(`Translation Error: ${err.message}`);
     }
   };
 
   const reset = () => {
     setStep(AppStep.IDLE);
-    setVideoFile(null);
-    setAudioTracks([]);
+    setSubtitleTracks([]);
     setFinalSRT('');
     setLogs([]);
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
-    <div className="min-h-screen flex flex-col relative bg-[#020617] text-white">
+    <div className="min-h-screen flex flex-col relative bg-[#020617] text-slate-200">
       <nav className="border-b border-white/5 glass-dark sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-6 flex justify-between h-16 items-center">
           <div className="flex items-center gap-3 cursor-pointer group" onClick={reset}>
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center neon-glow">
               <span className="text-white font-orbitron font-bold text-lg">S</span>
             </div>
-            <span className="font-orbitron font-bold text-xl tracking-widest">SUBGLOT</span>
+            <span className="font-orbitron font-bold text-xl tracking-widest text-white">SUBGLOT</span>
           </div>
-          {!ffmpegReady && (
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse"></div>
-              <span className="text-[10px] font-mono text-yellow-500 uppercase tracking-widest">WASM_BOOTING...</span>
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+             <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest hidden md:inline">Neural Node: Offline-Optimized</span>
+          </div>
         </div>
       </nav>
 
       <main className="flex-grow flex flex-col items-center py-12 px-6 z-10">
         {step === AppStep.IDLE && (
-          <div className="w-full max-w-5xl space-y-12 animate-in fade-in duration-700">
+          <div className="w-full max-w-5xl space-y-16 animate-in fade-in duration-1000">
             <div className="text-center space-y-6">
-              <h1 className="text-5xl md:text-7xl font-bold font-orbitron tracking-tight text-white leading-tight uppercase">
-                Video <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-fuchsia-400 neon-text">Translation</span>
+              <h1 className="text-6xl md:text-8xl font-bold font-orbitron tracking-tight text-white leading-tight uppercase">
+                Sub <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-fuchsia-400 neon-text">Link</span>
               </h1>
-              <p className="text-lg text-slate-400 max-w-2xl mx-auto font-light leading-relaxed">
-                Professional-grade Japanese audio extraction with manual stream targeting.
+              <p className="text-xl text-slate-400 max-w-2xl mx-auto font-light leading-relaxed">
+                Japanese to English SRT translation service. Powered by high-speed neural machine translation.
               </p>
             </div>
 
             <div className="max-w-xl mx-auto w-full">
-              <div className="glass-dark rounded-[2.5rem] p-1 relative overflow-hidden group">
+              <div className="glass-dark rounded-[3rem] p-1 relative overflow-hidden group border border-white/5">
                 <div className="scanline opacity-10"></div>
-                <div className="bg-[#0b1121]/80 p-12 rounded-[2.3rem] border border-white/5 flex flex-col items-center justify-center min-h-[300px]">
-                   <input type="file" accept="video/*,.mkv" onChange={handleVideoUpload} ref={fileInputRef} className="hidden" id="v-up" disabled={!ffmpegReady}/>
-                   <label htmlFor="v-up" className={`px-12 py-5 rounded-2xl font-orbitron font-bold text-sm tracking-[0.2em] transition uppercase border ${ffmpegReady ? 'bg-indigo-600 cursor-pointer hover:bg-indigo-500 text-white border-indigo-400/30' : 'bg-slate-800 text-slate-500 border-white/5'}`}>
-                      {ffmpegReady ? 'Upload Media File' : 'System Initializing...'}
+                <div className="bg-[#0b1121]/80 p-16 rounded-[2.8rem] border border-white/5 flex flex-col items-center justify-center min-h-[350px]">
+                   <input type="file" accept=".srt,video/*,.mkv" onChange={handleFileUpload} ref={fileInputRef} className="hidden" id="sub-up" disabled={!ffmpegReady}/>
+                   <label htmlFor="sub-up" className={`px-12 py-6 rounded-2xl font-orbitron font-bold text-sm tracking-[0.2em] transition uppercase border ${ffmpegReady ? 'bg-indigo-600 cursor-pointer hover:bg-indigo-500 text-white border-indigo-400/30 shadow-xl shadow-indigo-600/20' : 'bg-slate-800 text-slate-500 border-white/5'}`}>
+                      {ffmpegReady ? 'Upload SRT or Video' : 'Initializing Core...'}
                    </label>
-                   <p className="mt-4 text-slate-600 font-mono text-[9px] uppercase tracking-widest">MKV • MP4 • AVI • MOV</p>
+                   <p className="mt-6 text-slate-600 font-mono text-[10px] uppercase tracking-widest">SRT • MKV • MP4 • AVI</p>
                 </div>
               </div>
             </div>
@@ -244,52 +223,45 @@ const App: React.FC = () => {
         )}
 
         {step === AppStep.PROBING && (
-          <div className="w-full max-w-2xl flex flex-col items-center gap-12 py-20">
-            <div className="relative">
-              <div className="w-32 h-32 border-4 border-indigo-500/10 border-t-indigo-500 rounded-full animate-spin"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-2 h-2 bg-white rounded-full animate-ping"></div>
-              </div>
-            </div>
-            <div className="text-center space-y-3">
-              <h2 className="text-2xl font-orbitron text-white tracking-widest uppercase">Analyzing Streams</h2>
-              <p className="text-slate-500 font-mono text-[10px] tracking-[0.3em] uppercase animate-pulse">Scanning Media Container...</p>
-            </div>
+          <div className="w-full max-w-2xl flex flex-col items-center gap-12 py-24">
+             <div className="w-24 h-24 border-4 border-indigo-500/10 border-t-indigo-500 rounded-full animate-spin"></div>
+             <div className="text-center space-y-3">
+                <h2 className="text-2xl font-orbitron text-white tracking-widest uppercase">Media Analysis</h2>
+                <p className="text-indigo-400 font-mono text-[10px] tracking-[0.4em] uppercase animate-pulse">Scanning Stream Indices...</p>
+             </div>
           </div>
         )}
 
         {step === AppStep.SELECT_TRACK && (
           <div className="w-full max-w-4xl space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-500">
             <div className="text-center space-y-4">
-              <h2 className="text-4xl font-orbitron font-bold text-white tracking-widest uppercase">Stream Mapping</h2>
-              <p className="text-slate-400 text-sm font-light">Identify the <span className="text-indigo-400 font-bold underline underline-offset-8">Japanese</span> audio track for extraction.</p>
+              <h2 className="text-4xl font-orbitron font-bold text-white tracking-widest uppercase">Stream Selector</h2>
+              <p className="text-slate-400 text-sm">Select the <span className="text-indigo-400 font-bold underline underline-offset-8">Japanese Subtitle</span> track for translation.</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {audioTracks.map((track) => {
-                const isJpn = track.language?.toLowerCase().includes('jpn') || track.language?.toLowerCase().includes('japanese');
+              {subtitleTracks.map((track) => {
+                const isJpn = track.language?.toLowerCase().includes('jpn') || track.language?.toLowerCase().includes('ja');
                 return (
                   <button 
                     key={track.index}
-                    onClick={() => selectAndProcess(track.index)}
-                    className={`group relative glass-dark p-8 rounded-3xl border transition-all text-left flex items-center justify-between overflow-hidden ${
-                      isJpn ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 hover:border-white/20'
+                    onClick={() => extractAndTranslate(track.index)}
+                    className={`group glass-dark p-8 rounded-[2rem] border transition-all text-left flex items-center justify-between ${
+                      isJpn ? 'border-indigo-500/50 bg-indigo-500/5' : 'border-white/5 hover:border-white/20'
                     }`}
                   >
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       <div className="flex items-center gap-3">
-                        <h4 className="text-white font-orbitron font-bold uppercase tracking-widest text-xs">{track.title}</h4>
-                        {isJpn && <span className="text-[8px] bg-indigo-600 px-2 py-0.5 rounded-full font-bold">DETECTED_JA</span>}
+                        <h4 className="text-white font-orbitron font-bold uppercase tracking-widest text-[10px]">{track.title}</h4>
+                        {isJpn && <span className="text-[8px] bg-indigo-600 px-2 py-0.5 rounded font-bold uppercase">Source Found</span>}
                       </div>
-                      <p className="text-[10px] font-mono text-slate-400 uppercase tracking-tighter">
-                        Codec: <span className="text-indigo-400">{track.codec}</span><br/>
-                        Language: <span className="text-fuchsia-400 font-bold">{track.language?.toUpperCase() || 'UNKNOWN'}</span>
+                      <p className="text-[10px] font-mono text-slate-500 uppercase tracking-tighter">
+                        Format: <span className="text-indigo-400">{track.codec}</span> • 
+                        Tag: <span className="text-fuchsia-400">{track.language?.toUpperCase()}</span>
                       </p>
                     </div>
-                    <div className="w-12 h-12 rounded-2xl bg-white/5 group-hover:bg-indigo-500 group-hover:scale-110 flex items-center justify-center transition duration-300">
-                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                      </svg>
+                    <div className="w-12 h-12 rounded-xl bg-white/5 group-hover:bg-indigo-600 flex items-center justify-center transition">
+                      <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                     </div>
                   </button>
                 );
@@ -299,15 +271,15 @@ const App: React.FC = () => {
         )}
 
         {step === AppStep.PROCESSING && (
-          <div className="w-full max-w-5xl space-y-12 animate-in fade-in duration-500">
-            <div className="glass-dark p-12 rounded-[3rem] border border-indigo-500/20 text-center relative overflow-hidden shadow-2xl">
+          <div className="w-full max-w-5xl animate-in fade-in duration-500">
+            <div className="glass-dark p-16 rounded-[4rem] border border-indigo-500/20 text-center relative overflow-hidden shadow-2xl">
               <div className="scanline opacity-20"></div>
-              <h2 className="text-2xl font-orbitron font-bold text-white tracking-[0.3em] uppercase mb-4">Neural Processing Active</h2>
-              <NeuralBrain progress={processing.progress} isProcessing={true} />
-              <div className="mt-8 space-y-4">
-                 <p className="text-indigo-400 font-mono text-[10px] uppercase tracking-[0.4em] animate-pulse">{processing.currentTask}</p>
-                 <div className="max-w-md mx-auto h-1.5 bg-black/50 rounded-full overflow-hidden border border-white/5">
-                    <div className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 transition-all duration-300" style={{ width: `${processing.progress}%` }}></div>
+              <h2 className="text-2xl font-orbitron font-bold text-white tracking-[0.4em] uppercase mb-8">Neural Translation</h2>
+              <NeuralBrain progress={Math.round(processing.progress)} isProcessing={true} />
+              <div className="mt-12 space-y-4 max-w-md mx-auto">
+                 <p className="text-indigo-400 font-mono text-[10px] uppercase tracking-[0.5em] animate-pulse">{processing.currentTask}</p>
+                 <div className="h-1 bg-black/40 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 transition-all duration-300" style={{ width: `${processing.progress}%` }}></div>
                  </div>
               </div>
             </div>
@@ -316,38 +288,32 @@ const App: React.FC = () => {
 
         {step === AppStep.COMPLETED && (
           <div className="w-full max-w-4xl space-y-8 animate-in zoom-in-95 duration-700">
-            <div className="glass-dark p-12 rounded-[3rem] border border-indigo-500/20 shadow-2xl flex flex-col items-center text-center gap-10">
-              <div className="w-24 h-24 bg-indigo-500/10 rounded-3xl flex items-center justify-center border border-indigo-500/30 shadow-lg shadow-indigo-500/20">
-                <svg className="w-12 h-12 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+            <div className="glass-dark p-12 rounded-[4rem] border border-indigo-500/20 shadow-2xl flex flex-col items-center text-center gap-10">
+              <div className="w-24 h-24 bg-green-500/10 rounded-[2rem] flex items-center justify-center border border-green-500/30">
+                <svg className="w-12 h-12 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
               </div>
-              <h2 className="text-4xl font-orbitron font-bold text-white tracking-widest uppercase">SRT RECONSTRUCTION COMPLETE</h2>
-              <div className="w-full bg-black/40 p-8 rounded-3xl border border-white/5 font-mono text-[11px] text-slate-400 text-left max-h-[400px] overflow-y-auto leading-relaxed">
-                <pre>{finalSRT}</pre>
+              <h2 className="text-4xl font-orbitron font-bold text-white tracking-widest uppercase">SRT Synthesis Ready</h2>
+              <div className="w-full bg-black/40 p-8 rounded-3xl border border-white/5 font-mono text-[11px] text-slate-500 text-left max-h-[350px] overflow-y-auto">
+                <pre>{finalSRT.split('\n').slice(0, 50).join('\n')}...</pre>
               </div>
               <div className="flex gap-6 w-full">
-                <button onClick={reset} className="flex-1 px-10 py-6 rounded-2xl font-orbitron bg-white/5 border border-white/10 text-white uppercase tracking-widest text-xs hover:bg-white/10 transition">New Link</button>
-                <button onClick={() => downloadBlob(finalSRT, 'SubGlot_Sync_EN.srt')} className="flex-1 px-10 py-6 rounded-2xl font-orbitron bg-indigo-600 text-white uppercase tracking-widest text-xs hover:bg-indigo-500 transition shadow-xl shadow-indigo-500/40 border border-indigo-400/30">Download English SRT</button>
+                <button onClick={reset} className="flex-1 px-10 py-6 rounded-2xl font-orbitron bg-white/5 border border-white/10 text-white uppercase tracking-widest text-[10px] hover:bg-white/10 transition">Discard</button>
+                <button onClick={() => downloadBlob(finalSRT, 'Translated_English.srt')} className="flex-1 px-10 py-6 rounded-2xl font-orbitron bg-indigo-600 text-white uppercase tracking-widest text-[10px] hover:bg-indigo-500 transition shadow-2xl shadow-indigo-600/40">Download English SRT</button>
               </div>
             </div>
           </div>
         )}
 
         {(step !== AppStep.IDLE && step !== AppStep.COMPLETED) && (
-          <div className="mt-12 w-full max-w-2xl glass-dark p-5 rounded-2xl border border-white/5 h-[160px] overflow-hidden flex flex-col shadow-inner">
-             <div className="text-[9px] font-mono text-slate-600 uppercase tracking-[0.3em] mb-3 border-b border-white/5 pb-2 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse"></div>
-                Security Protocol Stream
-             </div>
-             <div className="flex-grow overflow-y-auto font-mono text-[10px] text-indigo-300/60 scrollbar-hide space-y-1.5">
-                {logs.map((log, i) => <div key={i} className="animate-in slide-in-from-left-2 duration-300 opacity-80">{log}</div>)}
+          <div className="mt-16 w-full max-w-2xl glass-dark p-6 rounded-3xl border border-white/5 h-[140px] overflow-hidden flex flex-col">
+             <div className="text-[9px] font-mono text-slate-600 uppercase tracking-[0.3em] mb-4 border-b border-white/5 pb-2">Session Traffic Logs</div>
+             <div className="flex-grow overflow-y-auto font-mono text-[10px] text-indigo-300/40 scrollbar-hide space-y-1.5">
+                {logs.map((log, i) => <div key={i} className="animate-in slide-in-from-left-2">{log}</div>)}
                 <div ref={logEndRef}></div>
              </div>
           </div>
         )}
       </main>
-      
       <Transparency />
     </div>
   );

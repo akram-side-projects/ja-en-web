@@ -1,141 +1,115 @@
 
-import React, { useEffect, useState, useRef } from 'react';
-import { SubtitleItem } from '../types';
+import React, { useEffect, useState, useMemo } from 'react';
 
 interface Props {
   progress: number;
-  originalSubs: SubtitleItem[];
-  currentTranslations: string[];
+  isProcessing: boolean;
 }
 
-const NeuralBrain: React.FC<Props> = ({ progress, originalSubs, currentTranslations }) => {
-  const [activeNode, setActiveNode] = useState(0);
-  const [streamPairs, setStreamPairs] = useState<{ ja: string; en: string; id: number }[]>([]);
-  const lastIndexRef = useRef(0);
+const NeuralBrain: React.FC<Props> = ({ progress, isProcessing }) => {
+  // Library of phrases to simulate real-time processing
+  const jaPhrases = useMemo(() => [
+    "おはようございます", "信じられない...", "どこに行くの？", "ターゲットを確認",
+    "力を合わせて", "未来のために", "準備はいいか？", "システムの再起動",
+    "通信開始...", "翻訳プロトコル", "データの解析中", "完了しました"
+  ], []);
+
+  const enPhrases = useMemo(() => [
+    "Good morning.", "I can't believe it...", "Where are you going?", "Target confirmed.",
+    "Join our forces.", "For the sake of the future.", "Are you ready?", "System reboot.",
+    "Starting comms...", "Translation protocol.", "Analyzing data...", "Task complete."
+  ], []);
+
+  const [activePhrases, setActivePhrases] = useState({ ja: "", en: "" });
 
   useEffect(() => {
-    if (progress < 20) setActiveNode(1);
-    else if (progress < 40) setActiveNode(2);
-    else if (progress < 60) setActiveNode(3);
-    else if (progress < 80) setActiveNode(4);
-    else setActiveNode(5);
-  }, [progress]);
-
-  // Feed the visualizer with real data as it becomes available
-  useEffect(() => {
-    if (currentTranslations.length > 0) {
-      // Get the latest batch of pairs
-      const start = Math.max(0, currentTranslations.length - 10);
-      const latestPairs = currentTranslations.slice(start).map((en, idx) => ({
-        ja: originalSubs[start + idx]?.text || "...",
-        en: en,
-        id: Date.now() + idx
-      }));
-      setStreamPairs(latestPairs);
+    if (isProcessing) {
+      const interval = setInterval(() => {
+        const idx = Math.floor(Math.random() * jaPhrases.length);
+        setActivePhrases({
+          ja: jaPhrases[idx],
+          en: enPhrases[idx]
+        });
+      }, 150); // High speed updates
+      return () => clearInterval(interval);
     }
-  }, [currentTranslations, originalSubs]);
+  }, [isProcessing, jaPhrases, enPhrases]);
 
   return (
-    <div className="w-full py-8 flex flex-col items-center">
-      <div className="relative w-full max-w-4xl aspect-[21/9] flex items-center justify-between px-4 overflow-hidden">
-        
-        {/* Real-time Japanese Input Ticker */}
-        <div className="w-1/3 h-full relative flex flex-col justify-center overflow-hidden border-r border-indigo-500/10">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent"></div>
-          <div className="flex flex-col gap-2 animate-[slide_1.5s_linear_infinite]">
-            {originalSubs.slice(Math.floor(progress * originalSubs.length / 100), Math.floor(progress * originalSubs.length / 100) + 8).map((sub, i) => (
-              <div 
-                key={sub.id + i} 
-                className="text-[10px] font-medium text-indigo-400/40 whitespace-nowrap overflow-hidden text-ellipsis px-4"
-                style={{ opacity: 1 - (i * 0.12) }}
-              >
-                {sub.text}
-              </div>
-            ))}
+    <div className="w-full py-12 flex flex-col items-center">
+      <div className="relative w-full max-w-5xl aspect-[21/9] flex items-center justify-between px-12 overflow-hidden glass-dark rounded-[2rem] border border-white/5">
+        <div className="scanline opacity-20"></div>
+
+        {/* Input: Transcription Stream */}
+        <div className="w-1/3 h-full relative flex flex-col justify-center items-center overflow-hidden">
+          <div className="absolute top-4 left-4 font-orbitron text-[8px] text-indigo-500/60 tracking-widest uppercase">JA_INPUT_STREAM</div>
+          <div className="flex flex-col gap-2 items-center">
+             <div className="text-xl font-bold text-indigo-400 animate-pulse tracking-widest font-japanese">
+               {activePhrases.ja}
+             </div>
+             <div className="w-full h-px bg-gradient-to-r from-transparent via-indigo-500/20 to-transparent"></div>
+             <div className="text-[10px] font-mono text-indigo-300/30 opacity-50">
+               RAW_PCM_BUFFER_0x{Math.floor(Math.random() * 9999).toString(16)}
+             </div>
           </div>
-          <div className="absolute bottom-2 left-4 text-[8px] font-orbitron text-indigo-500 tracking-[0.3em] uppercase bg-[#020617] px-2">JA_UPLINK</div>
         </div>
 
         {/* Central Neural Machine */}
         <div className="relative w-1/3 h-full flex items-center justify-center">
-          <svg viewBox="0 0 400 300" className="w-full h-full">
-            {/* Core Glow */}
-            <circle cx="200" cy="150" r="60" fill="url(#coreGradient)" className="animate-pulse" />
+          <svg viewBox="0 0 400 300" className="w-full h-full drop-shadow-[0_0_20px_rgba(99,102,241,0.2)]">
+            <circle cx="200" cy="150" r="80" fill="url(#brainGlow)" className={isProcessing ? "animate-pulse" : ""} />
             <defs>
-              <radialGradient id="coreGradient">
-                <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
-                <stop offset="70%" stopColor="#d946ef" stopOpacity="0.1" />
-                <stop offset="100%" stopColor="#020617" stopOpacity="0" />
+              <radialGradient id="brainGlow">
+                <stop offset="0%" stopColor="#6366f1" stopOpacity="0.3" />
+                <stop offset="100%" stopColor="transparent" />
               </radialGradient>
             </defs>
 
-            {/* Neural Matrix Lines */}
-            <g className="opacity-20">
+            {/* Neural Synapses */}
+            <g className="opacity-40">
               {[...Array(12)].map((_, i) => (
                 <line 
                   key={i}
-                  x1="120" y1={80 + i * 12} x2="280" y2={80 + i * 12} 
-                  stroke="white" strokeWidth="0.2"
-                  className="animate-pulse"
-                  style={{ animationDelay: `${i * 0.1}s` }}
+                  x1="140" y1={100 + i * 10} x2="260" y2={100 + i * 10}
+                  stroke={i % 2 === 0 ? "#6366f1" : "#d946ef"}
+                  strokeWidth="0.5"
+                  className={isProcessing ? "animate-[dash_2s_linear_infinite]" : ""}
+                  style={{ animationDelay: `${i * 0.1}s`, strokeDasharray: "4, 10" }}
                 />
               ))}
             </g>
 
-            {/* Processing Core */}
-            <rect x="170" y="120" width="60" height="60" rx="12" fill="none" stroke="#6366f1" strokeWidth="1" className="animate-spin-slow" />
-            <rect x="180" y="130" width="40" height="40" rx="8" fill="none" stroke="#d946ef" strokeWidth="1" className="animate-[spin_4s_linear_infinite_reverse]" />
-            
-            <text x="200" y="155" textAnchor="middle" className="fill-white font-orbitron text-[14px] font-bold tracking-widest">
+            <rect x="175" y="125" width="50" height="50" rx="8" fill="#020617" stroke="#6366f1" strokeWidth="1" className="animate-spin-slow" />
+            <text x="200" y="155" textAnchor="middle" className="fill-white font-orbitron text-[14px] font-bold">
               {progress}%
             </text>
           </svg>
-          
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-             <div className="w-32 h-32 border border-white/5 rounded-full animate-ping opacity-10"></div>
-          </div>
         </div>
 
-        {/* Real-time English Output Ticker */}
-        <div className="w-1/3 h-full relative flex flex-col justify-center overflow-hidden border-l border-fuchsia-500/10">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-fuchsia-500/5 to-transparent"></div>
-          <div className="flex flex-col gap-2 animate-[slide_1.2s_linear_infinite]">
-            {currentTranslations.slice(-8).reverse().map((text, i) => (
-              <div 
-                key={i} 
-                className="text-[10px] font-bold text-fuchsia-400 whitespace-nowrap overflow-hidden text-ellipsis px-4"
-                style={{ opacity: 1 - (i * 0.12) }}
-              >
-                {text}
-              </div>
-            ))}
+        {/* Output: Translation Synthesis */}
+        <div className="w-1/3 h-full relative flex flex-col justify-center items-center overflow-hidden">
+          <div className="absolute top-4 right-4 font-orbitron text-[8px] text-fuchsia-500/60 tracking-widest uppercase">EN_SRT_SYNTH</div>
+          <div className="flex flex-col gap-2 items-center">
+             <div className="text-sm font-bold text-fuchsia-400 animate-pulse tracking-wide italic">
+               "{activePhrases.en}"
+             </div>
+             <div className="w-full h-px bg-gradient-to-r from-transparent via-fuchsia-500/20 to-transparent"></div>
+             <div className="text-[10px] font-mono text-fuchsia-300/30 opacity-50">
+               SRT_BLOCK_SEQ_00{Math.floor(progress * 5)}
+             </div>
           </div>
-          <div className="absolute bottom-2 right-4 text-[8px] font-orbitron text-fuchsia-500 tracking-[0.3em] uppercase bg-[#020617] px-2">EN_SYNTH</div>
-        </div>
-      </div>
-
-      {/* High-Speed Status Line */}
-      <div className="w-full max-w-2xl px-8 py-2 bg-white/5 rounded-full border border-white/5 flex items-center justify-between font-mono text-[9px] uppercase tracking-widest">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-flicker"></div>
-          <span className="text-indigo-400">Stream: Active</span>
-        </div>
-        <div className="text-slate-500">
-          Latency: <span className="text-green-500">0.42ms</span> • Buffer: <span className="text-white">OPTIMIZED</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-fuchsia-400">Layer: {activeNode}</span>
-          <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-500 animate-flicker"></div>
         </div>
       </div>
 
       <style>{`
-        @keyframes slide {
-          from { transform: translateY(0); }
-          to { transform: translateY(-20px); }
+        @keyframes dash {
+          to { stroke-dashoffset: -100; }
         }
         .animate-spin-slow {
-          animation: spin 8s linear infinite;
+          animation: spin 10s linear infinite;
+        }
+        .font-japanese {
+          font-family: "MS PGothic", "Hiragino Kaku Gothic ProN", sans-serif;
         }
       `}</style>
     </div>

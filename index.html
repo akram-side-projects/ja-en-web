@@ -1,0 +1,100 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SubGlot - AI Subtitle Translation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --neon-primary: #6366f1;
+      --neon-secondary: #d946ef;
+      --bg-dark: #020617;
+    }
+    body { 
+      font-family: 'Inter', sans-serif; 
+      background-color: var(--bg-dark);
+      color: #f8fafc;
+    }
+    .font-orbitron { font-family: 'Orbitron', sans-serif; }
+    .font-mono { font-family: 'Fira Code', 'Courier New', monospace; }
+    
+    .neon-glow {
+      box-shadow: 0 0 15px rgba(99, 102, 241, 0.2), 0 0 5px rgba(99, 102, 241, 0.1);
+    }
+    .neon-border-subtle {
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      box-shadow: 0 0 10px rgba(99, 102, 241, 0.1);
+    }
+    .neon-text {
+      text-shadow: 0 0 8px rgba(99, 102, 241, 0.5);
+    }
+    
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(100%); }
+    }
+    .scanline {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(to bottom, transparent, rgba(99, 102, 241, 0.1), transparent);
+      animation: scanline 4s linear infinite;
+      pointer-events: none;
+    }
+
+    @keyframes grid-move {
+      0% { background-position: 0 0; }
+      100% { background-position: 50px 50px; }
+    }
+    .grid-bg {
+      background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 50px 50px;
+      animation: grid-move 20s linear infinite;
+    }
+
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 0.8; }
+      50% { opacity: 1; }
+    }
+    .animate-pulse-soft { animation: pulse-soft 3s ease-in-out infinite; }
+
+    .glass-dark {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #020617; }
+    ::-webkit-scrollbar-thumb { 
+      background: #1e293b; 
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--neon-primary); }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body class="overflow-x-hidden min-h-screen">
+  <div class="fixed inset-0 grid-bg pointer-events-none"></div>
+  <div id="root"></div>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
